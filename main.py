@@ -228,6 +228,8 @@ def main(args):
         criterion, None, 'none', 0, 0
     )
     output_dir = Path(args.output_dir)
+    
+     max_accuracy = 0.
 
     for epoch in range(args.start_epoch, args.epochs):
         
