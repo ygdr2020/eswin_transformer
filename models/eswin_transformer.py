@@ -284,7 +284,7 @@ class SwinTransformerBlock(nn.Module):
         return flops
 
 class Downsample(nn.Module):
-    r""" Patch Merging Layer.
+    r""" 
 
     Args:
         input_resolution (tuple[int]): Resolution of input feature.
