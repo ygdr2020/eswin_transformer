@@ -33,7 +33,7 @@ def get_args_parser():
     # Model parameters
     parser.add_argument('--model', default='eswin_transformer', type=str, metavar='MODEL',
                         help='Name of model to train')
-    parser.add_argument('--input-size', default=32, type=int, help='images input size')
+    parser.add_argument('--input-size', default=64, type=int, help='images input size')
 
     parser.add_argument('--drop', type=float, default=0.0, metavar='PCT',
                         help='Dropout rate (default: 0.)')
