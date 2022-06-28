@@ -13,25 +13,30 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler
+import time
+import datetime
 
 from datasets import build_dataset
 from losses import DistillationLoss
 from engine import train_one_epoch, evaluate
 from models import build_model
 from PIL import ImageFile
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import warnings
+
 warnings.filterwarnings('ignore')
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('ETransformer training and evaluation script', add_help=False)
-    
-    parser.add_argument('--batch-size', default=256, type=int)
-    parser.add_argument('--epochs', default=300, type=int)
+
+    parser.add_argument('--batch-size', default=128, type=int)
+    parser.add_argument('--epochs', default=150, type=int)
 
     # Model parameters
-    parser.add_argument('--model', default='eswin_transformer', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='hconvmixer', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--input-size', default=64, type=int, help='images input size')
 
@@ -47,16 +52,16 @@ def get_args_parser():
                         help='Optimezer Epsilon (default: 1e-8)')
     parser.add_argument('--opt-betas', default=None, type=float, nargs='+', metavar='BETA',
                         help='Optimizer Betas (default: None, use opt default)')
-    parser.add_argument('--clip-grad', type=float, default=5., metavar='NORM',
+    parser.add_argument('--clip-grad', type=float, default=1.0, metavar='NORM',
                         help='Clip gradient norm (default: None, no clipping)')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
                         help='SGD momentum (default: 0.9)')
     parser.add_argument('--weight-decay', type=float, default=0.05,
-                        help='weight decay (default: 0.05)')
+                        help='weight decay (default: 0.01)')
     # Learning rate schedule parameters
     parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
                         help='LR scheduler (default: "cosine"')
-    parser.add_argument('--lr', type=float, default=5e-4, metavar='LR',
+    parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                         help='learning rate (default: 5e-4)')
     parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct',
                         help='learning rate noise on/off epoch percentages')
@@ -71,7 +76,7 @@ def get_args_parser():
 
     parser.add_argument('--decay-epochs', type=float, default=30, metavar='N',
                         help='epoch interval to decay LR')
-    parser.add_argument('--warmup-epochs', type=int, default=5, metavar='N',
+    parser.add_argument('--warmup-epochs', type=int, default=0, metavar='N',
                         help='epochs to warmup LR, if scheduler supports')
     parser.add_argument('--cooldown-epochs', type=int, default=10, metavar='N',
                         help='epochs to cooldown LR at min_lr, after cyclic schedule ends')
@@ -81,14 +86,16 @@ def get_args_parser():
                         help='LR decay rate (default: 0.1)')
 
     # Augmentation parameters
-    parser.add_argument('--color-jitter', type=float, default=0.4, metavar='PCT',
+    parser.add_argument('--color-jitter', type=float, default=0., metavar='PCT',
                         help='Color jitter factor (default: 0.4)')
+    parser.add_argument('--scale', type=float, nargs='+', default=[0.08, 1.0], metavar='PCT',
+                        help='Random resize scale (default: 0.08 1.0)')
     parser.add_argument('--aa', type=str, default='rand-m9-mstd0.5-inc1', metavar='NAME',
                         help='Use AutoAugment policy. "v0" or "original". " + \
                              "(default: rand-m9-mstd0.5-inc1)'),
     parser.add_argument('--smoothing', type=float, default=0.1, help='Label smoothing (default: 0.1)')
-    parser.add_argument('--train-interpolation', type=str, default='bicubic',
-                        help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
+    # parser.add_argument('--train-interpolation', type=str, default='bicubic',
+    #                   help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
 
     parser.add_argument('--repeated-aug', action='store_true')
     parser.add_argument('--no-repeated-aug', action='store_false', dest='repeated_aug')
@@ -105,9 +112,9 @@ def get_args_parser():
                         help='Do not random erase first (clean) augmentation split')
 
     # * Mixup params
-    parser.add_argument('--mixup', type=float, default=0.8,
+    parser.add_argument('--mixup', type=float, default=0.5,
                         help='mixup alpha, mixup enabled if > 0. (default: 0.8)')
-    parser.add_argument('--cutmix', type=float, default=1.0,
+    parser.add_argument('--cutmix', type=float, default=0.5,
                         help='cutmix alpha, cutmix enabled if > 0. (default: 1.0)')
     parser.add_argument('--cutmix-minmax', type=float, nargs='+', default=None,
                         help='cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)')
@@ -118,11 +125,10 @@ def get_args_parser():
     parser.add_argument('--mixup-mode', type=str, default='batch',
                         help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"')
 
-
     # Dataset parameters
-    parser.add_argument('--data-path', default='./cifar-10', type=str,
+    parser.add_argument('--data-path', default='~/tiny-imagenet-200', type=str,
                         help='dataset path')
-    parser.add_argument('--data-set', default='CIFAR10', choices=['CIFAR10', 'CIFAR100'],
+    parser.add_argument('--data-set', default='IMNET', choices=['CIFAR10', 'CIFAR100', 'IMNET'],
                         type=str, help='Image Net dataset path')
 
     parser.add_argument('--output_dir', default='./outputs',
@@ -143,12 +149,10 @@ def get_args_parser():
 
 
 def main(args):
-    
-
-    device = torch.device(args.device)
+    device = torch.device('cuda')
 
     # fix the seed for reproducibility
-    seed = args.seed 
+    seed = args.seed
     torch.manual_seed(seed)
     np.random.seed(seed)
     # random.seed(seed)
@@ -158,7 +162,6 @@ def main(args):
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
-    
     sampler_train = torch.utils.data.RandomSampler(dataset_train)
     sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
@@ -186,7 +189,7 @@ def main(args):
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
 
-    print(f"Creating model: {args.model}")
+    # print(f"Creating model: {args.model}")
     model = build_model()
 
     model.to(device)
@@ -201,10 +204,9 @@ def main(args):
     #         resume='')
 
     model_without_ddp = model
-   
 
-    linear_scaled_lr = args.lr * args.batch_size  / 512.0
-    linear_scaled_warmup_lr = args.warmup_lr * args.batch_size  / 512.0
+    linear_scaled_lr = args.lr * args.batch_size / 512.0
+    linear_scaled_warmup_lr = args.warmup_lr * args.batch_size / 512.0
     linear_scaled_min_lr = args.min_lr * args.batch_size / 512.0
     args.lr = linear_scaled_lr
     args.warmup_lr = linear_scaled_warmup_lr
@@ -228,11 +230,9 @@ def main(args):
         criterion, None, 'none', 0, 0
     )
     output_dir = Path(args.output_dir)
-    
-    max_accuracy = 0.0
-
+    max_accuracy = 0.1
+    start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        
 
         train_stats = train_one_epoch(
             model, criterion, data_loader_train,
@@ -245,27 +245,29 @@ def main(args):
         test_stats = evaluate(data_loader_val, model, device)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
 
-            
-
         max_accuracy = max(max_accuracy, test_stats["acc1"])
+        now_time = time.time() - start_time
+        now_time_str = str(datetime.timedelta(seconds=int(now_time)))
         print(f'Max accuracy: {max_accuracy:.2f}%')
+        print('Now Training time {}'.format(now_time_str))
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},
                      'epoch': epoch,
+                     'now time': now_time_str,
                      }
 
         if args.output_dir:
-            with (output_dir / "log.txt").open("a") as f:
+            with (output_dir / "hconvmixer-128-timagenet.txt").open("a") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
-
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    print('Training time {}'.format(total_time_str))
 
 
 if __name__ == '__main__':
-    
+
     parser = argparse.ArgumentParser('eswin_transformer training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
-

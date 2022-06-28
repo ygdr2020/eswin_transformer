@@ -25,7 +25,7 @@ __all__ = ['ResNet', 'BasicBlock', 'Bottleneck']  # model_registry will add each
 def _cfg(url='', **kwargs):
     return {
         'url': url,
-        'num_classes': 1000, 'input_size': (3, 224, 224), 'pool_size': (7, 7),
+        'num_classes': 100, 'input_size': (3, 32, 32), 'pool_size': (2, 2),
         'crop_pct': 0.875, 'interpolation': 'bilinear',
         'mean': IMAGENET_DEFAULT_MEAN, 'std': IMAGENET_DEFAULT_STD,
         'first_conv': 'conv1', 'classifier': 'fc',
@@ -594,7 +594,7 @@ class ResNet(nn.Module):
     """
 
     def __init__(
-            self, block, layers, num_classes=1000, in_chans=3, output_stride=32, global_pool='avg',
+            self, block=Bottleneck, layers=[3, 4, 6, 3], num_classes=10, in_chans=3, output_stride=32, global_pool='avg',
             cardinality=1, base_width=64, stem_width=64, stem_type='', replace_stem_pool=False, block_reduce_first=1,
             down_kernel_size=1, avg_down=False, act_layer=nn.ReLU, norm_layer=nn.BatchNorm2d, aa_layer=None,
             drop_rate=0.0, drop_path_rate=0., drop_block_rate=0., zero_init_last=True, block_args=None):
